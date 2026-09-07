@@ -216,3 +216,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# --- gap-scout secrets (never commit) ---
+.env
+scripts/client_secret.json
+scripts/token.json
+*.token.json
+
+# --- editor / OS ---
+.vscode/
+.idea/
+.DS_Store
