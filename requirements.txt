@@ -1,0 +1,11 @@
+langgraph>=0.2.60
+langchain-core>=0.3.28
+langchain-anthropic>=0.3.0
+pydantic>=2.7
+requests>=2.31
+python-dotenv>=1.0
+
+# Gmail API (OAuth) send path
+google-api-python-client>=2.140
+google-auth>=2.34
+google-auth-oauthlib>=1.2
