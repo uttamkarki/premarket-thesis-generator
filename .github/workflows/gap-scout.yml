@@ -1,0 +1,34 @@
+name: gap-scout
+
+on:
+  schedule:
+    - cron: "0 11 * * 1-5"   # 7:00 AM EDT
+    - cron: "0 12 * * 1-5"   # 7:00 AM EST
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if it's not ~7am ET right now (for testing)"
+        type: boolean
+        default: true
+
+jobs:
+  run-gap-scout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run gap-scout
+        env:
+          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+          SCHWAB_REDIRECT_URI: ${{ secrets.SCHWAB_REDIRECT_URI }}
+          SCHWAB_TOKEN_JSON_B64: ${{ secrets.SCHWAB_TOKEN_JSON_B64 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_TOKEN_JSON_B64: ${{ secrets.GMAIL_TOKEN_JSON_B64 }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          FORCE_RUN: ${{ github.event.inputs.force }}
+        run: python -m src.gap_scout.main
