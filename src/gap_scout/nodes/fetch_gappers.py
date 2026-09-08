@@ -1,33 +1,26 @@
-"""Node 1: pull today's top gap-up and gap-down tickers (free-tier FMP).
+"""Node 1: pull today's top gap-up and gap-down tickers via Schwab movers.
 
-Applies quality filters so the scan reflects real, tradeable gappers --
-similar in spirit to what a curated feed like Briefing.com's movers list
-would show -- rather than every sub-$1 SPAC unit/warrant/rights ticker
-that a raw movers list includes.
+STATUS: field-name parsing below is a best guess, NOT yet verified against
+a populated response -- confirmed only that the endpoint returns
+{"screeners": [...]} with an empty list (tested on a market holiday, so
+no data to inspect). Finalize the inner-object field names once we test
+this during real market hours.
 
-IMPORTANT: this deliberately never calls FMP's /quote endpoint. Confirmed
-against a live free-tier key that /stable/quote only works for AAPL (likely
-a whitelisted demo symbol) and returns 402 Payment Required for every other
-ticker, even large, liquid ones (GWRE, EGAN, etc). Everything below is
-derived instead from:
-  - /biggest-gainers, /biggest-losers -- free, gives price + % change, from
-    which previousClose is derived algebraically (no extra request needed).
-  - /historical-price-eod/full -- free, used only for its most recent day's
-    volume, as a liquidity proxy (this is prior-day volume, not true live
-    premarket volume, which the free tier has no way to provide).
+Applies quality filters so the scan reflects real, tradeable gappers
+rather than every sub-$1 SPAC unit/warrant/rights ticker: minimum price,
+allowed exchanges, and a ticker-suffix pattern for SPAC units/warrants/rights.
 """
 from __future__ import annotations
 
 import re
-import time
 from datetime import datetime
 
-from src.gap_scout.clients.fmp_client import FMPClient
+from src.gap_scout.clients.schwab_client import SchwabClient
 from src.gap_scout.config import (
     ALLOWED_EXCHANGES,
     MIN_PRICE,
-    MIN_VOLUME,
     NUM_GAPPERS_PER_DIRECTION,
+    SCHWAB_MOVER_INDICES,
 )
 from src.gap_scout.state import Gapper, GraphState
 
@@ -36,13 +29,8 @@ from src.gap_scout.state import Gapper, GraphState
 # NASDAQ/NYSE are almost always 1-4 letters.
 _SPAC_SUFFIX_RE = re.compile(r"^[A-Z]{4,}[UWR]$")
 
-# Delay between per-ticker historical_daily() calls, to avoid tripping any
-# burst rate limit on the free plan.
-_REQUEST_DELAY_SECONDS = 0.35
 
-
-def _passes_cheap_filters(ticker: str, price: float | None, exchange: str | None) -> bool:
-    """Filters using only data already on the gainers/losers list -- no extra request."""
+def _passes_quality_filters(ticker: str, price: float | None, exchange: str | None) -> bool:
     if price is None or price < MIN_PRICE:
         return False
     if exchange and exchange.strip().upper() not in ALLOWED_EXCHANGES:
@@ -53,61 +41,52 @@ def _passes_cheap_filters(ticker: str, price: float | None, exchange: str | None
 
 
 def fetch_gappers(state: GraphState) -> dict:
-    fmp = FMPClient()
+    schwab = SchwabClient()
     gappers: list[Gapper] = []
+    seen_tickers: set[str] = set()
 
-    raw_limit = max(NUM_GAPPERS_PER_DIRECTION * 4, 20)
-    movers_by_direction = (
-        (fmp.gainers(limit=raw_limit), "up"),
-        (fmp.losers(limit=raw_limit), "down"),
-    )
-
-    for movers, label in movers_by_direction:
+    for label, sort in (("up", "PERCENT_CHANGE_UP"), ("down", "PERCENT_CHANGE_DOWN")):
         kept_for_direction = 0
-        for m in movers:
+        for index_symbol in SCHWAB_MOVER_INDICES:
             if kept_for_direction >= NUM_GAPPERS_PER_DIRECTION:
                 break
+            entries = schwab.movers(index_symbol, sort=sort)
+            for e in entries:
+                if kept_for_direction >= NUM_GAPPERS_PER_DIRECTION:
+                    break
 
-            ticker = m.get("symbol")
-            price = m.get("price")
-            gap_pct = m.get("changesPercentage")
-            exchange = m.get("exchange")
+                # TODO: confirm these field names against a real populated
+                # response -- best guesses based on this API family for now.
+                ticker = e.get("symbol")
+                last_price = e.get("lastPrice")
+                gap_pct = e.get("netPercentChange")
+                volume = e.get("totalVolume") or e.get("volume") or 0
+                exchange = e.get("exchangeName") or e.get("exchange")
 
-            if not ticker or price is None or gap_pct is None:
-                continue
-            if not _passes_cheap_filters(ticker, price, exchange):
-                continue
+                if not ticker or ticker in seen_tickers:
+                    continue
+                if last_price is None or gap_pct is None:
+                    continue
+                if not _passes_quality_filters(ticker, float(last_price), exchange):
+                    continue
 
-            # previousClose = price / (1 + pct_change/100) -- no extra request.
-            try:
-                prior_close = float(price) / (1 + float(gap_pct) / 100)
-            except ZeroDivisionError:
-                continue
+                try:
+                    prior_close = float(last_price) / (1 + float(gap_pct) / 100)
+                except ZeroDivisionError:
+                    continue
 
-            # Liquidity check via yesterday's volume (free, no /quote needed).
-            time.sleep(_REQUEST_DELAY_SECONDS)
-            try:
-                bars = fmp.historical_daily(ticker, days=2)
-            except Exception as exc:
-                print(f"  skipping {ticker}: historical lookup failed ({exc})")
-                continue
-            if not bars:
-                continue
-            volume = bars[-1].get("volume", 0) or 0
-            if volume < MIN_VOLUME:
-                continue
-
-            gappers.append(
-                Gapper(
-                    ticker=ticker,
-                    direction=label,
-                    gap_pct=round(float(gap_pct), 2),
-                    prior_close=round(prior_close, 4),
-                    last_price=float(price),
-                    premarket_volume=int(volume),
+                gappers.append(
+                    Gapper(
+                        ticker=ticker,
+                        direction=label,
+                        gap_pct=round(float(gap_pct), 2),
+                        prior_close=round(prior_close, 4),
+                        last_price=float(last_price),
+                        premarket_volume=int(volume or 0),
+                    )
                 )
-            )
-            kept_for_direction += 1
+                seen_tickers.add(ticker)
+                kept_for_direction += 1
 
     run_date = datetime.now().astimezone().strftime("%Y-%m-%d")
     return {"gappers": gappers, "run_date": run_date}

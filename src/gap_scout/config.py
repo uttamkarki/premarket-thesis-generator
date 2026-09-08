@@ -7,12 +7,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MASSIVE_API_KEY = os.environ.get("MASSIVE_API_KEY", "")
-MASSIVE_BASE_URL = os.environ.get("MASSIVE_BASE_URL", "https://api.massive.com")
-
-FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
-FMP_BASE_URL = os.environ.get("FMP_BASE_URL", "https://financialmodelingprep.com/stable")
-
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
@@ -22,8 +16,7 @@ EMAIL_TO = os.environ.get("EMAIL_TO", "")
 NUM_GAPPERS_PER_DIRECTION = int(os.environ.get("NUM_GAPPERS_PER_DIRECTION", "5"))
 
 # Quality filters for fetch_gappers -- keeps the scan to real, tradeable
-# gappers instead of every sub-$1 SPAC unit/warrant/rights ticker FMP's
-# raw movers list includes.
+# gappers instead of every sub-$1 SPAC unit/warrant/rights ticker.
 MIN_PRICE = float(os.environ.get("MIN_PRICE", "5"))
 MIN_VOLUME = int(os.environ.get("MIN_VOLUME", "500000"))
 ALLOWED_EXCHANGES = {
@@ -31,3 +24,16 @@ ALLOWED_EXCHANGES = {
     for e in os.environ.get("ALLOWED_EXCHANGES", "NASDAQ,NYSE,AMEX").split(",")
     if e.strip()
 }
+
+# ---- Charles Schwab (market data: movers, quotes, price history) ----
+# OAuth refresh token expires every 7 days -- rerun scripts/schwab_oauth_setup.py
+# weekly. See clients/schwab_client.py for details.
+SCHWAB_APP_KEY = os.environ.get("SCHWAB_APP_KEY", "")
+SCHWAB_APP_SECRET = os.environ.get("SCHWAB_APP_SECRET", "")
+SCHWAB_REDIRECT_URI = os.environ.get("SCHWAB_REDIRECT_URI", "")
+SCHWAB_TOKEN_JSON_B64 = os.environ.get("SCHWAB_TOKEN_JSON_B64", "")
+
+# Which indices to scan for movers, combined.
+SCHWAB_MOVER_INDICES = [
+    s.strip() for s in os.environ.get("SCHWAB_MOVER_INDICES", "$COMPX,$SPX").split(",") if s.strip()
+]
