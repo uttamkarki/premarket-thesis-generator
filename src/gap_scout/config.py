@@ -7,6 +7,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---- Financial Modeling Prep (gapper discovery only) ----
+# Free tier. Used only for /biggest-gainers and /biggest-losers -- confirmed
+# reliable, unlike Schwab's /movers which is empty pre-market.
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
+FMP_BASE_URL = os.environ.get("FMP_BASE_URL", "https://financialmodelingprep.com/stable")
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
