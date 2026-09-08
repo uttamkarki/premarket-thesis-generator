@@ -1,27 +1,24 @@
-"""Node 1: pull today's top gap-up and gap-down tickers via Schwab movers.
+"""Node 1: pull today's top gap-up and gap-down tickers.
 
-STATUS: field-name parsing below is a best guess, NOT yet verified against
-a populated response -- confirmed only that the endpoint returns
-{"screeners": [...]} with an empty list (tested on a market holiday, so
-no data to inspect). Finalize the inner-object field names once we test
-this during real market hours.
+Discovery uses FMP's /biggest-gainers and /biggest-losers -- confirmed to
+return real, populated data reliably (unlike Schwab's /movers, which only
+reflects regular-session activity and returns empty results pre-market;
+see clients/schwab_client.py for that finding). prior_close is derived
+algebraically from price + %change, so no extra per-ticker API call is
+needed. Schwab remains available in this project for future per-symbol
+premarket quote enrichment (its /quotes endpoint DOES carry a live
+pre-market price in its "extended" field), just not for discovery.
 
-Applies quality filters so the scan reflects real, tradeable gappers
-rather than every sub-$1 SPAC unit/warrant/rights ticker: minimum price,
-allowed exchanges, and a ticker-suffix pattern for SPAC units/warrants/rights.
+Applies quality filters (min price, allowed exchanges, SPAC unit/warrant/
+rights ticker-suffix pattern) so the scan reflects real, tradeable gappers.
 """
 from __future__ import annotations
 
 import re
 from datetime import datetime
 
-from src.gap_scout.clients.schwab_client import SchwabClient
-from src.gap_scout.config import (
-    ALLOWED_EXCHANGES,
-    MIN_PRICE,
-    NUM_GAPPERS_PER_DIRECTION,
-    SCHWAB_MOVER_INDICES,
-)
+from src.gap_scout.clients.fmp_client import FMPClient
+from src.gap_scout.config import ALLOWED_EXCHANGES, MIN_PRICE, NUM_GAPPERS_PER_DIRECTION
 from src.gap_scout.state import Gapper, GraphState
 
 # SPAC units/warrants/rights are typically 4+ letter tickers ending in
@@ -41,52 +38,47 @@ def _passes_quality_filters(ticker: str, price: float | None, exchange: str | No
 
 
 def fetch_gappers(state: GraphState) -> dict:
-    schwab = SchwabClient()
+    fmp = FMPClient()
     gappers: list[Gapper] = []
-    seen_tickers: set[str] = set()
 
-    for label, sort in (("up", "PERCENT_CHANGE_UP"), ("down", "PERCENT_CHANGE_DOWN")):
+    raw_limit = max(NUM_GAPPERS_PER_DIRECTION * 6, 30)
+    movers_by_direction = (
+        (fmp.gainers(limit=raw_limit), "up"),
+        (fmp.losers(limit=raw_limit), "down"),
+    )
+
+    for movers, label in movers_by_direction:
         kept_for_direction = 0
-        for index_symbol in SCHWAB_MOVER_INDICES:
+        for m in movers:
             if kept_for_direction >= NUM_GAPPERS_PER_DIRECTION:
                 break
-            entries = schwab.movers(index_symbol, sort=sort)
-            for e in entries:
-                if kept_for_direction >= NUM_GAPPERS_PER_DIRECTION:
-                    break
 
-                # TODO: confirm these field names against a real populated
-                # response -- best guesses based on this API family for now.
-                ticker = e.get("symbol")
-                last_price = e.get("lastPrice")
-                gap_pct = e.get("netPercentChange")
-                volume = e.get("totalVolume") or e.get("volume") or 0
-                exchange = e.get("exchangeName") or e.get("exchange")
+            ticker = m.get("symbol")
+            price = m.get("price")
+            gap_pct = m.get("changesPercentage")
+            exchange = m.get("exchange")
 
-                if not ticker or ticker in seen_tickers:
-                    continue
-                if last_price is None or gap_pct is None:
-                    continue
-                if not _passes_quality_filters(ticker, float(last_price), exchange):
-                    continue
+            if not ticker or price is None or gap_pct is None:
+                continue
+            if not _passes_quality_filters(ticker, price, exchange):
+                continue
 
-                try:
-                    prior_close = float(last_price) / (1 + float(gap_pct) / 100)
-                except ZeroDivisionError:
-                    continue
+            try:
+                prior_close = float(price) / (1 + float(gap_pct) / 100)
+            except ZeroDivisionError:
+                continue
 
-                gappers.append(
-                    Gapper(
-                        ticker=ticker,
-                        direction=label,
-                        gap_pct=round(float(gap_pct), 2),
-                        prior_close=round(prior_close, 4),
-                        last_price=float(last_price),
-                        premarket_volume=int(volume or 0),
-                    )
+            gappers.append(
+                Gapper(
+                    ticker=ticker,
+                    direction=label,
+                    gap_pct=round(float(gap_pct), 2),
+                    prior_close=round(prior_close, 4),
+                    last_price=float(price),
+                    premarket_volume=0,  # not available without a per-ticker call; not filtered on for now
                 )
-                seen_tickers.add(ticker)
-                kept_for_direction += 1
+            )
+            kept_for_direction += 1
 
     run_date = datetime.now().astimezone().strftime("%Y-%m-%d")
     return {"gappers": gappers, "run_date": run_date}
