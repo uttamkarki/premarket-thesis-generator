@@ -5,6 +5,10 @@ for the day's biggest pre-market gappers, researches the catalyst behind each
 one, reads the market regime, and emails you a ranked pre-market gap-trading
 brief.
 
+## Architecture
+
+![gap-scout architecture](docs/architecture.png)
+
 ## How it works
 
 ```
