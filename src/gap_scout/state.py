@@ -9,19 +9,26 @@ class Gapper(TypedDict):
     """A single ticker pulled from the pre-market gap scan."""
 
     ticker: str
-    direction: Literal["up", "down"]
+    company_name: str
+    category: Literal["Gainers", "Losers", "Most Active"]
+    direction: Literal["Bullish", "Bearish"]
     gap_pct: float
     prior_close: float
     last_price: float
     premarket_volume: int
+    avg_volume_10d: int
 
 
 class TickerResearch(Gapper):
     """Gapper plus the news-derived catalyst read from `research_ticker`."""
 
     catalyst_type: str
+    category_label: str
     catalyst_magnitude: Literal["small", "medium", "large"]
     summary: str
+    thesis: str
+    plan_bias: Literal["Long", "Short"]
+    plan_action: str
     headlines_used: list[str]
 
 
@@ -40,6 +47,7 @@ class GraphState(TypedDict):
 
     run_date: str
     gappers: list[Gapper]
+    stocks_in_play_path: str
 
     # Populated by parallel `Send`-fanned `research_ticker` calls, one list
     # entry appended per ticker -> needs an additive reducer.

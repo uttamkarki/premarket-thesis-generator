@@ -1,46 +1,109 @@
-"""Node 6: draft the final HTML brief from the surviving tickers + regime."""
+"""Node 6: render the final HTML brief from surviving tickers + regime.
+
+Deliberately NOT an LLM call. Every piece of content used here (catalyst,
+category_label, thesis, plan_bias, plan_action, conviction, market_regime)
+already exists in state by this point, generated upstream by research_ticker
+(per-ticker, in parallel, with full headline context) and market_regime.
+Templating this deterministically in Python means the visual structure --
+colored bias dots, the market-regime callout box, the high-conviction
+cards, the pass-list table -- renders identically every single run,
+instead of varying run-to-run the way an LLM asked to freehand-write HTML
+would. All styling is inline (no <style> blocks, no external CSS) since
+most email clients, including Gmail, strip anything else.
+"""
 from __future__ import annotations
 
-from langchain_anthropic import ChatAnthropic
+import html
 
-from src.gap_scout.config import ANTHROPIC_MODEL
-from src.gap_scout.state import GraphState
+from src.gap_scout.state import GraphState, TickerAssessment
 
-_SYSTEM_PROMPT = """You write a concise, no-fluff pre-market gap-trading brief for a swing \
-trader who follows Breakouts, Episodic Pivots, Parabolic \
-shorts/longs). Output clean HTML fragment only (no markdown, no <html>/<body>/<head> wrapper) \
-using <h2>, <h3>, <p>, <ul>/<li> tags. Structure:
+# A ticker with conviction >= this goes in the "High-Conviction" section
+# with the full Catalyst/Thesis/Plan card; below it, it goes in the
+# "Low-Conviction / Pass" table instead.
+HIGH_CONVICTION_THRESHOLD = 4
 
-1. <h2>Market Regime</h2> — one short paragraph using the regime line given.
-2. <h2>Today's Gappers</h2> — tickers ranked by conviction, highest first. For each ticker: \
-   <h3>TICKER — gap %</h3> then a short paragraph combining the catalyst summary, the gap-room \
-   read, and a one-line suggested bias (long / short / pass) tied to whichever setup \
-   fits best (Breakout, Episodic Pivot, or Parabolic short/long) if one clearly applies.
-3. If no tickers survived, say so plainly and suggest sitting on hands today.
 
-Do not invent facts beyond what's given. Keep it skimmable — readable in under two minutes."""
+def _esc(text: str) -> str:
+    return html.escape(str(text), quote=False)
+
+
+def _regime_box(market_regime: str) -> str:
+    return f"""
+<h2 style="margin:24px 0 8px;">📊 Market Regime</h2>
+<div style="background:#f4f4f6;border-left:4px solid #333;border-radius:6px;
+padding:14px 16px;color:#222;line-height:1.5;">
+{_esc(market_regime)}
+</div>
+"""
+
+
+def _high_conviction_card(t: TickerAssessment) -> str:
+    dot = "🟢" if t["plan_bias"] == "Long" else "🔴"
+    bias_word = "LONG" if t["plan_bias"] == "Long" else "SHORT"
+    sign = "+" if t["gap_pct"] >= 0 else ""
+    return f"""
+<h3 style="margin:20px 0 6px;">{dot} {_esc(t['ticker'])} ({sign}{t['gap_pct']:.2f}%) | {_esc(t['category_label'])}</h3>
+<ul style="margin:0 0 4px;padding-left:20px;line-height:1.5;">
+<li><b>Catalyst:</b> {_esc(t['category_label'])}. {_esc(t['summary'])}</li>
+<li><b>Thesis:</b> {_esc(t['thesis'])}</li>
+<li><b>Plan:</b> <b>BIAS: {bias_word}.</b> {_esc(t['plan_action'])}</li>
+</ul>
+"""
+
+
+def _pass_table(rows: list[TickerAssessment]) -> str:
+    if not rows:
+        return "<p>Nothing in the low-conviction list today.</p>"
+
+    header = """
+<tr style="background:#f4f4f6;text-align:left;">
+<th style="padding:8px;border-bottom:1px solid #ccc;">Ticker</th>
+<th style="padding:8px;border-bottom:1px solid #ccc;">Gap %</th>
+<th style="padding:8px;border-bottom:1px solid #ccc;">Category</th>
+<th style="padding:8px;border-bottom:1px solid #ccc;">Bias / Core Action Plan</th>
+</tr>
+"""
+    body_rows = []
+    for t in rows:
+        sign = "+" if t["gap_pct"] >= 0 else ""
+        body_rows.append(f"""
+<tr>
+<td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">{_esc(t['ticker'])}</td>
+<td style="padding:8px;border-bottom:1px solid #eee;">{sign}{t['gap_pct']:.2f}%</td>
+<td style="padding:8px;border-bottom:1px solid #eee;">{_esc(t['category_label'])}</td>
+<td style="padding:8px;border-bottom:1px solid #eee;"><b>PASS.</b> {_esc(t['thesis'])}</td>
+</tr>
+""")
+    return (
+        '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+        + header
+        + "".join(body_rows)
+        + "</table>"
+    )
 
 
 def compose_thesis(state: GraphState) -> dict:
-    kept = [t for t in state["assessed"] if t.get("keep")]
-    kept.sort(key=lambda t: t["conviction"], reverse=True)
+    assessed = sorted(state["assessed"], key=lambda t: t["conviction"], reverse=True)
 
-    lines = [f"Market regime: {state['market_regime']}", ""]
-    if not kept:
-        lines.append("No gappers cleared the catalyst/gap-room bar today.")
-    for t in kept:
-        lines.append(
-            f"{t['ticker']} | gap {t['direction']} {t['gap_pct']}% | conviction {t['conviction']}/5\n"
-            f"  catalyst: {t['catalyst_type']} ({t['catalyst_magnitude']}) - {t['summary']}\n"
-            f"  gap room: {t['gap_room']} (used ~{t['range_used_pct']}% of {t['atr_pct']}% ADR)"
+    high = [t for t in assessed if t["conviction"] >= HIGH_CONVICTION_THRESHOLD]
+    low = [t for t in assessed if t["conviction"] < HIGH_CONVICTION_THRESHOLD]
+
+    parts = [
+        f'<h1 style="margin:0 0 4px;">☀️ Pre-Market Thesis Brief: {_esc(state["run_date"])}</h1>',
+        _regime_box(state["market_regime"]),
+    ]
+
+    if not assessed:
+        parts.append(
+            '<h2 style="margin:24px 0 8px;">Today\'s Gappers</h2>'
+            "<p>No gappers cleared the scan today. Sit on hands and let the setup come to you.</p>"
         )
-    facts_block = "\n".join(lines)
+    else:
+        if high:
+            parts.append('<h2 style="margin:24px 0 8px;">🔥 High-Conviction Stocks In Play</h2>')
+            parts.extend(_high_conviction_card(t) for t in high)
+        if low:
+            parts.append('<h2 style="margin:24px 0 8px;">⚠️ Low-Conviction / Pass List</h2>')
+            parts.append(_pass_table(low))
 
-    llm = ChatAnthropic(model=ANTHROPIC_MODEL, temperature=0.2)
-    response = llm.invoke(
-        [
-            ("system", _SYSTEM_PROMPT),
-            ("human", f"Facts for today ({state['run_date']}):\n\n{facts_block}"),
-        ]
-    )
-    return {"email_body": response.content}
+    return {"email_body": "\n".join(parts)}

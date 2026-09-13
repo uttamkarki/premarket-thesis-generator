@@ -103,3 +103,24 @@ class SchwabClient:
         # Field name for the list itself is unconfirmed -- adjust once we see
         # a real response (commonly "screeners" in this API family).
         return data.get("screeners", []) if isinstance(data, dict) else []
+
+    def quotes(self, tickers: list[str]) -> dict[str, Any]:
+        """Batch quote lookup, one request for the whole list (confirmed:
+        GET /quotes?symbols=A,B,C -- not per-symbol calls). Returns a dict
+        keyed by ticker, each value shaped like the single-symbol /quotes
+        response verified earlier in this project (quote/fundamental/
+        reference/extended/regular groups). Used to backfill premarket
+        volume (extended.totalVolume), 10-day avg volume
+        (fundamental.avg10DaysVolume), and company name
+        (reference.description) for tickers FMP already discovered.
+
+        Per Schwab docs, an invalid/failed symbol comes back as an error
+        entry within the response map rather than failing the whole batch.
+        """
+        if not tickers:
+            return {}
+        data = self._get(
+            "/quotes",
+            params={"symbols": ",".join(tickers), "fields": "quote,fundamental,extended,reference"},
+        )
+        return data if isinstance(data, dict) else {}

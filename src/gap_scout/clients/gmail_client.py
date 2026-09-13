@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
+import os
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from google.auth.transport.requests import Request
@@ -29,13 +33,35 @@ def _load_credentials() -> Credentials:
     return creds
 
 
-def send_email(to_addr: str, subject: str, html_body: str) -> str:
+def send_email(
+    to_addr: str,
+    subject: str,
+    html_body: str,
+    attachment_paths: list[str] | None = None,
+) -> str:
     if not to_addr:
         raise RuntimeError("EMAIL_TO is not set")
     creds = _load_credentials()
     service = build("gmail", "v1", credentials=creds)
 
-    message = MIMEText(html_body, "html")
+    if attachment_paths:
+        message = MIMEMultipart()
+        message.attach(MIMEText(html_body, "html"))
+        for path in attachment_paths:
+            if not path or not os.path.exists(path):
+                print(f"  [warn] attachment path missing, skipping: {path}")
+                continue
+            content_type, _ = mimetypes.guess_type(path)
+            main_type, sub_type = (content_type or "text/plain").split("/", 1)
+            with open(path, "rb") as f:
+                part = MIMEApplication(f.read(), _subtype=sub_type)
+            part.add_header(
+                "Content-Disposition", "attachment", filename=os.path.basename(path)
+            )
+            message.attach(part)
+    else:
+        message = MIMEText(html_body, "html")
+
     message["to"] = to_addr
     message["subject"] = subject
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()

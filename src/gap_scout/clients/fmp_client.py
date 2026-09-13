@@ -1,4 +1,4 @@
-"""Thin REST wrapper around Financial Modeling Prep's free-tier /stable API.
+"""Thin REST wrapper around Financial Modeling Prep's stable API.
 
 Used ONLY for gapper discovery (biggest-gainers/losers). Confirmed to
 return real, populated data on every test during this project -- unlike
@@ -39,4 +39,11 @@ class FMPClient:
 
     def losers(self, limit: int = 20) -> list[dict[str, Any]]:
         data = self._get("/biggest-losers")
+        return data[:limit] if isinstance(data, list) else []
+
+    def most_actives(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Highest trading-volume stocks today -- same shape as gainers/losers
+        (symbol, price, name, change, changesPercentage, exchange), just
+        sorted by volume instead of % move. Confirmed endpoint."""
+        data = self._get("/most-actives")
         return data[:limit] if isinstance(data, list) else []

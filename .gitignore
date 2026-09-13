@@ -239,3 +239,6 @@ scripts/token.json
 .vscode/
 .idea/
 .DS_Store
+
+# --- local files ---
+output/

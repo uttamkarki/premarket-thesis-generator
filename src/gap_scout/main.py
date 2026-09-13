@@ -38,6 +38,7 @@ def main() -> None:
     result = app.invoke(
         {
             "gappers": [],
+            "stocks_in_play_path": "",
             "researched": [],
             "assessed": [],
             "market_regime": "",
