@@ -1,13 +1,16 @@
 name: gap-scout
 
+# Triggered externally by cron-job.org calling the GitHub API's
+# workflow_dispatch endpoint at 8:05 AM ET on weekdays (see README).
+# GitHub's own `schedule:` cron trigger was removed after it proved
+# unreliable in practice -- runs were landing 3.5-5 hours late.
+# workflow_dispatch is a normal-priority trigger, not the deprioritized
+# schedule queue, so it actually fires on time.
 on:
-  schedule:
-    - cron: "0 11 * * 1-5"   # 7:00 AM EDT
-    - cron: "0 12 * * 1-5"   # 7:00 AM EST
   workflow_dispatch:
     inputs:
       force:
-        description: "Run even if it's not ~7am ET right now (for testing)"
+        description: "Run even if it's not ~8:15am ET right now (for testing)"
         type: boolean
         default: true
 
