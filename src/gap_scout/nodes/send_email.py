@@ -16,5 +16,7 @@ max-width: 640px; margin: 0 auto; color: #111;">
 def send_email(state: GraphState) -> dict:
     html = _WRAPPER.format(body=state["email_body"])
     subject = f"Pre-market gap brief — {state['run_date']}"
-    gmail_send(EMAIL_TO, subject, html)
+    stocks_in_play_path = state.get("stocks_in_play_path")
+    attachments = [stocks_in_play_path] if stocks_in_play_path else None
+    gmail_send(EMAIL_TO, subject, html, attachment_paths=attachments)
     return {"email_sent": True}

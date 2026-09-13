@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---- Financial Modeling Prep (gapper discovery only) ----
-# Free tier. Used only for /biggest-gainers and /biggest-losers -- confirmed
+# Used only for /biggest-gainers and /biggest-losers -- confirmed
 # reliable, unlike Schwab's /movers which is empty pre-market.
 FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
 FMP_BASE_URL = os.environ.get("FMP_BASE_URL", "https://financialmodelingprep.com/stable")
@@ -23,7 +23,7 @@ NUM_GAPPERS_PER_DIRECTION = int(os.environ.get("NUM_GAPPERS_PER_DIRECTION", "5")
 
 # Quality filters for fetch_gappers -- keeps the scan to real, tradeable
 # gappers instead of every sub-$1 SPAC unit/warrant/rights ticker.
-MIN_PRICE = float(os.environ.get("MIN_PRICE", "5"))
+MIN_PRICE = float(os.environ.get("MIN_PRICE", "3"))
 MIN_VOLUME = int(os.environ.get("MIN_VOLUME", "500000"))
 ALLOWED_EXCHANGES = {
     e.strip().upper()

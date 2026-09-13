@@ -1,7 +1,6 @@
-"""Free per-ticker news headlines via Google News RSS.
+"""Per-ticker news headlines via Google News RSS.
 
-No API key, no signup, no daily quota. FMP's per-ticker news endpoint is
-restricted on the free tier (confirmed directly against a live key), so
+No API key, no signup, no daily quota, so
 this replaces it for the research_ticker node.
 """
 from __future__ import annotations
