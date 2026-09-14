@@ -8,7 +8,8 @@ merges them into a single flat table, tagged with which list(s) it came
 from, then sorted by % change.
 
 All three endpoints share the same response shape (symbol, price, name,
-change, changesPercentage, exchange). Direction (up/down) is derived from the sign of changesPercentage
+change, changesPercentage, exchange) -- confirmed against a live free-tier
+key. Direction (up/down) is derived from the sign of changesPercentage
 rather than trusted from which endpoint it came from, since most-actives
 isn't itself directional.
 
@@ -28,13 +29,20 @@ from typing import Any
 
 from src.gap_scout.clients.fmp_client import FMPClient
 from src.gap_scout.clients.schwab_client import SchwabClient
-from src.gap_scout.config import ALLOWED_EXCHANGES, MIN_PRICE
+from src.gap_scout.config import ALLOWED_EXCHANGES, MAX_GAP_PCT, MIN_PRICE
 from src.gap_scout.state import Gapper, GraphState
 
 # SPAC units/warrants/rights are typically 4+ letter tickers ending in
 # U, W, or R (e.g. FSHPR, RIBBR, IPEXU) -- ordinary common stock tickers on
 # NASDAQ/NYSE are almost always 1-4 letters.
 _SPAC_SUFFIX_RE = re.compile(r"^[A-Z]{4,}[UWR]$")
+
+# Mutual funds use a 5-letter ticker ending in X as a hard naming
+# convention (e.g. FCIGX, FIDGX, FBCVX). These only price once per day at
+# NAV -- they don't gap, don't trade intraday, and have no place in a
+# pre-market scan. A "-19% change" on one of these is a distribution event
+# or stale data, never a real move.
+_MUTUAL_FUND_RE = re.compile(r"^[A-Z]{4}X$")
 
 _CATEGORY_BY_SOURCE = {
     "gainers": "Gainers",
@@ -43,12 +51,24 @@ _CATEGORY_BY_SOURCE = {
 }
 
 
-def _passes_quality_filters(ticker: str, price: float | None, exchange: str | None) -> bool:
+def _passes_quality_filters(
+    ticker: str, price: float | None, exchange: str | None, gap_pct: float | None
+) -> bool:
     if price is None or price < MIN_PRICE:
         return False
-    if exchange and exchange.strip().upper() not in ALLOWED_EXCHANGES:
+    # NOTE: this used to be `if exchange and exchange.strip().upper() not in
+    # ALLOWED_EXCHANGES`, which silently let through any ticker with a
+    # missing/None exchange value (the `exchange and ...` short-circuited
+    # to False, skipping the check instead of enforcing it -- exactly how
+    # some mutual funds with blank exchange data got through). Now a
+    # missing exchange is treated as a reject, not a free pass.
+    if not exchange or exchange.strip().upper() not in ALLOWED_EXCHANGES:
         return False
     if _SPAC_SUFFIX_RE.match(ticker):
+        return False
+    if _MUTUAL_FUND_RE.match(ticker):
+        return False
+    if gap_pct is not None and abs(gap_pct) > MAX_GAP_PCT:
         return False
     return True
 
@@ -80,7 +100,7 @@ def fetch_gappers(state: GraphState) -> dict:
 
         if price is None or gap_pct is None:
             continue
-        if not _passes_quality_filters(ticker, price, exchange):
+        if not _passes_quality_filters(ticker, price, exchange, gap_pct):
             continue
 
         try:
@@ -152,13 +172,13 @@ def _write_stocks_in_play_file(gappers: list[Gapper], run_date: str) -> str:
     path = out_dir / f"stocks_in_play_{run_date}.txt"
 
     header = (
-        f"{'Ticker':<8}{'Company':<28}{'Category':<14}{'Price':>10}{'Gap %':>10}"
+        f"{'Ticker':<8}{'Company':<26}{'Category':<14}{'Price':>10}{'Gap %':>10}"
         f"{'PM Vol':>12}{'10d Avg Vol':>14}"
     )
     lines = [header, "-" * len(header)]
     for g in gappers:
         lines.append(
-            f"{g['ticker']:<8}{g['company_name'][:26]:<28}{g['category']:<14}"
+            f"{g['ticker']:<8}{g['company_name'][:24]:<26}{g['category']:<14}"
             f"{g['last_price']:>10.2f}{g['gap_pct']:>+10.2f}"
             f"{g['premarket_volume']:>12,}{g['avg_volume_10d']:>14,}"
         )

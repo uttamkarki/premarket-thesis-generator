@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---- Financial Modeling Prep (gapper discovery only) ----
-# Used only for /biggest-gainers and /biggest-losers -- confirmed
+#Used only for /biggest-gainers and /biggest-losers -- confirmed
 # reliable, unlike Schwab's /movers which is empty pre-market.
 FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
 FMP_BASE_URL = os.environ.get("FMP_BASE_URL", "https://financialmodelingprep.com/stable")
@@ -25,6 +25,12 @@ NUM_GAPPERS_PER_DIRECTION = int(os.environ.get("NUM_GAPPERS_PER_DIRECTION", "5")
 # gappers instead of every sub-$1 SPAC unit/warrant/rights ticker.
 MIN_PRICE = float(os.environ.get("MIN_PRICE", "3"))
 MIN_VOLUME = int(os.environ.get("MIN_VOLUME", "500000"))
+# Real single-day gaps essentially never exceed a few hundred percent, even
+# for tiny biotech/microcap catalysts. Moves beyond this are almost always
+# a stale/thin "last price" print (e.g. a single penny-priced trade far
+# below the real bid/ask) rather than an actual market move -- confirmed
+# on IPDN, which showed +2498% driven by exactly this.
+MAX_GAP_PCT = float(os.environ.get("MAX_GAP_PCT", "300"))
 ALLOWED_EXCHANGES = {
     e.strip().upper()
     for e in os.environ.get("ALLOWED_EXCHANGES", "NASDAQ,NYSE,AMEX").split(",")
