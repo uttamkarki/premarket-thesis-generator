@@ -1,11 +1,11 @@
-"""Thin REST wrapper around Financial Modeling Prep's stable API.
+"""Thin REST wrapper around Financial Modeling Prep's /stable API.
 
-Used ONLY for gapper discovery (biggest-gainers/losers). Confirmed to
-return real, populated data on every test during this project -- unlike
-Schwab's /movers, which only reflects regular-session activity and is
-empty pre-market. Schwab is still used elsewhere (kept for future
-per-symbol premarket quote enrichment, since /quotes DOES carry live
-pre-market prices in its "extended" field).
+Used ONLY for gapper discovery (biggest-gainers/losers/most-actives).
+Confirmed to return real, populated data on every test during this
+project -- unlike Schwab's /movers, which only reflects regular-session
+activity and is empty pre-market. Schwab is used elsewhere for per-symbol
+premarket quote enrichment (its /quotes endpoint carries live pre-market
+prices in its "extended" field).
 
 Docs: https://site.financialmodelingprep.com/developer/docs
 """
@@ -33,17 +33,22 @@ class FMPClient:
         resp.raise_for_status()
         return resp.json()
 
-    def gainers(self, limit: int = 20) -> list[dict[str, Any]]:
+    def gainers(self) -> list[dict[str, Any]]:
+        # No truncation here on purpose -- fetch_gappers.py filters in one
+        # place, after merging all three lists. A `limit` param here used
+        # to silently cap this at 20 regardless of what fetch_gappers.py's
+        # own docstring claimed ("no limit, filter later") -- that
+        # contradiction is why this method no longer slices at all.
         data = self._get("/biggest-gainers")
-        return data[:limit] if isinstance(data, list) else []
+        return data if isinstance(data, list) else []
 
-    def losers(self, limit: int = 20) -> list[dict[str, Any]]:
+    def losers(self) -> list[dict[str, Any]]:
         data = self._get("/biggest-losers")
-        return data[:limit] if isinstance(data, list) else []
+        return data if isinstance(data, list) else []
 
-    def most_actives(self, limit: int = 20) -> list[dict[str, Any]]:
+    def most_actives(self) -> list[dict[str, Any]]:
         """Highest trading-volume stocks today -- same shape as gainers/losers
         (symbol, price, name, change, changesPercentage, exchange), just
-        sorted by volume instead of % move. Confirmed endpoint."""
+        sorted by volume instead of % move."""
         data = self._get("/most-actives")
-        return data[:limit] if isinstance(data, list) else []
+        return data if isinstance(data, list) else []
