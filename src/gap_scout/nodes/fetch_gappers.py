@@ -8,7 +8,7 @@ merges them into a single flat table, tagged with which list(s) it came
 from, then sorted by % change.
 
 All three endpoints share the same response shape (symbol, price, name,
-change, changesPercentage, exchange) -- confirmed against a live free-tier
+change, changesPercentage, exchange) -- confirmed against a live
 key. Direction (up/down) is derived from the sign of changesPercentage
 rather than trusted from which endpoint it came from, since most-actives
 isn't itself directional.
@@ -29,7 +29,7 @@ from typing import Any
 
 from src.gap_scout.clients.fmp_client import FMPClient
 from src.gap_scout.clients.schwab_client import SchwabClient
-from src.gap_scout.config import ALLOWED_EXCHANGES, MAX_GAP_PCT, MIN_PRICE
+from src.gap_scout.config import ALLOWED_EXCHANGES, MAX_GAP_PCT, MIN_PRICE, MIN_VOLUME
 from src.gap_scout.state import Gapper, GraphState
 
 # SPAC units/warrants/rights are typically 4+ letter tickers ending in
@@ -122,10 +122,19 @@ def fetch_gappers(state: GraphState) -> dict:
             )
         )
 
-    # One sort, whole table: gainers at top, decliners at bottom.
-    gappers.sort(key=lambda g: g["gap_pct"], reverse=True)
+    schwab_enriched = _enrich_with_schwab(gappers)
 
-    _enrich_with_schwab(gappers)
+    # Volume filter only enforced when Schwab enrichment actually succeeded
+    # -- if it's down/expired, every ticker's volume defaults to 0, and
+    # filtering on that would wrongly reject the entire list instead of
+    # just degrading gracefully like the rest of this pipeline does.
+    if schwab_enriched:
+        gappers = [g for g in gappers if g["premarket_volume"] >= MIN_VOLUME]
+
+    # Sort AFTER enrichment, not before -- Schwab may have just corrected
+    # gap_pct for some tickers, and the table needs to reflect the final,
+    # corrected values, not FMP's original (possibly stale) ordering.
+    gappers.sort(key=lambda g: g["premarket_volume"], reverse=True)
 
     run_date = datetime.now().astimezone().strftime("%Y-%m-%d")
     stocks_in_play_path = _write_stocks_in_play_file(gappers, run_date)
@@ -133,22 +142,50 @@ def fetch_gappers(state: GraphState) -> dict:
     return {"gappers": gappers, "run_date": run_date, "stocks_in_play_path": stocks_in_play_path}
 
 
-def _enrich_with_schwab(gappers: list[Gapper]) -> None:
-    """Backfill company name, premarket volume, and 10-day avg volume from
-    Schwab's batch /quotes endpoint. One call for the whole list. Fully
-    resilient: if Schwab creds are missing/expired or the call fails
-    entirely, gappers just keep their zero/blank defaults rather than
-    crashing the run. A single bad ticker inside the batch doesn't affect
-    the others (Schwab returns per-symbol errors, not a batch failure).
+def _enrich_with_schwab(gappers: list[Gapper]) -> bool:
+    """Backfill company name, current volume, and 10-day avg volume from
+    Schwab's batch /quotes endpoint -- AND recompute price/gap_pct/prior_close
+    from Schwab's own numbers when available, overriding FMP's. Also
+    corrects `category` when it does: a ticker tagged "Losers" at FMP's
+    discovery-time snapshot can have since recovered into positive
+    territory by the time Schwab's fresher quote lands (or vice versa) --
+    confirmed in practice (FTFT tagged "Gainers" while showing -23%).
+    "Most Active" is left alone since it isn't direction-based.
+
+    Field source: `quote`, not `extended`. Confirmed against a real response
+    dump (INTC) that `extended`'s fields are frequently just empty
+    placeholders (totalVolume=0, quoteTime=0, bidPrice=0.0) even when real
+    trading is happening -- while `quote.totalVolume`, `quote.lastPrice`,
+    and `quote.closePrice` are populated with real, current numbers in the
+    same response. `extended` is kept only as a fallback if `quote`'s
+    corresponding field is ever missing.
+
+    Why override FMP's price/gap_pct at all: FMP's `changesPercentage` is
+    FMP's own precomputed value, not something we calculate -- and it can
+    reference a stale previousClose very early in pre-market (confirmed in
+    practice: FMP showed a gap still matching the PRIOR day's move when
+    queried early the following morning, instead of the new day's actual
+    move vs the new prior close).
+
+    Returns True if the Schwab call itself succeeded (even if individual
+    tickers inside it came back with gaps) -- callers use this to decide
+    whether it's safe to filter on premarket_volume, since that field is
+    meaningless (stuck at 0) when this returns False.
+
+    One call for the whole list. Fully resilient: if Schwab creds are
+    missing/expired or the call fails entirely, gappers just keep their
+    FMP-derived values (and zero/blank volume/name) rather than crashing
+    the run. A single bad ticker inside the batch doesn't affect the
+    others (Schwab returns per-symbol errors, not a batch failure).
     """
     if not gappers:
-        return
+        return False
     try:
         schwab = SchwabClient()
         quotes = schwab.quotes([g["ticker"] for g in gappers])
     except Exception as exc:
         print(f"  [warn] Schwab enrichment skipped entirely: {exc}")
-        return
+        return False
 
     for g in gappers:
         entry = quotes.get(g["ticker"])
@@ -157,13 +194,36 @@ def _enrich_with_schwab(gappers: list[Gapper]) -> None:
         extended = entry.get("extended", {}) or {}
         fundamental = entry.get("fundamental", {}) or {}
         reference = entry.get("reference", {}) or {}
+        quote = entry.get("quote", {}) or {}
 
-        if extended.get("totalVolume") is not None:
-            g["premarket_volume"] = int(extended["totalVolume"])
+        volume = quote.get("totalVolume")
+        if not volume:
+            volume = extended.get("totalVolume")  # fallback only
+        if volume is not None:
+            g["premarket_volume"] = int(volume)
+
         if fundamental.get("avg10DaysVolume") is not None:
             g["avg_volume_10d"] = int(fundamental["avg10DaysVolume"])
         if reference.get("description"):
             g["company_name"] = reference["description"]
+
+        # Recompute price/gap_pct/prior_close from Schwab's fresher numbers
+        # when both a current price and a real previous close are available.
+        fresh_price = quote.get("lastPrice") or extended.get("lastPrice")
+        fresh_prior_close = quote.get("closePrice")
+        if fresh_price and fresh_prior_close:
+            try:
+                new_gap_pct = (float(fresh_price) - float(fresh_prior_close)) / float(fresh_prior_close) * 100
+            except ZeroDivisionError:
+                continue
+            g["last_price"] = round(float(fresh_price), 4)
+            g["prior_close"] = round(float(fresh_prior_close), 4)
+            g["gap_pct"] = round(new_gap_pct, 2)
+            g["direction"] = "Bullish" if new_gap_pct >= 0 else "Bearish"
+            if g["category"] in ("Gainers", "Losers"):
+                g["category"] = "Gainers" if new_gap_pct >= 0 else "Losers"
+
+    return True
 
 
 def _write_stocks_in_play_file(gappers: list[Gapper], run_date: str) -> str:

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+- Removed FMP client's hidden 20-item cap on gainers/losers/most-actives --
+  fetch_gappers.py's own docstring said "no limit" but the client silently
+  truncated anyway.
+- Fixed Schwab enrichment reading from the wrong response block (`extended`
+  instead of `quote`) -- confirmed via a real INTC dump that `extended` is
+  frequently just empty placeholders even during real trading.
+- Added price/gap_pct/prior_close recomputation from Schwab's quote data,
+  overriding FMP's changesPercentage -- confirmed root cause: FMP's own
+  precomputed gap can reference a stale previousClose very early pre-market.
+- Fixed category label going stale after the above correction (a ticker
+  tagged "Losers" could flip positive by the time Schwab's fresher quote
+  lands; confirmed on FTFT).
+- Fixed sort happening before enrichment instead of after.
+- Wired up MIN_VOLUME, previously dead config with nothing enforcing it --
+  only applied when Schwab enrichment succeeds, so a down/expired Schwab
+  connection degrades gracefully instead of rejecting every ticker.
+
 ## 0.3.0
 - Reverted discovery from Schwab back to FMP: Schwab's `/movers` only
   reflects regular-session activity and is empty pre-market, which defeats

@@ -24,7 +24,7 @@ NUM_GAPPERS_PER_DIRECTION = int(os.environ.get("NUM_GAPPERS_PER_DIRECTION", "5")
 # Quality filters for fetch_gappers -- keeps the scan to real, tradeable
 # gappers instead of every sub-$1 SPAC unit/warrant/rights ticker.
 MIN_PRICE = float(os.environ.get("MIN_PRICE", "3"))
-MIN_VOLUME = int(os.environ.get("MIN_VOLUME", "500000"))
+MIN_VOLUME = int(os.environ.get("MIN_VOLUME", "100000"))
 # Real single-day gaps essentially never exceed a few hundred percent, even
 # for tiny biotech/microcap catalysts. Moves beyond this are almost always
 # a stale/thin "last price" print (e.g. a single penny-priced trade far
